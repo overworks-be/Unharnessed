@@ -13,6 +13,9 @@
 //!
 //! A user always has models, offline or not, install or upgrade.
 //!
+//! The model additions (`crate::additions`: models released since the
+//! catalog repo's last update), when fetched, extend whichever layer served.
+//!
 //! The live `OpenRouter` list (`crate::openrouter`), when one was fetched,
 //! overlays the `OpenRouter` entries of whichever layer served.
 //!
@@ -29,6 +32,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::additions::{merge_model_additions, ModelAdditions, MODEL_ADDITIONS_URL};
 use crate::bundled::{load_bundled_models, BundledAssets};
 use crate::cache::{CatalogCache, RefreshOptions, PUBLIC_SCOPE};
 use crate::fetch::{CatalogFetcher, MODEL_CATALOG_URL};
@@ -89,6 +93,9 @@ pub struct ModelCatalog {
     /// The live `OpenRouter` list; `None` keeps the catalog's entries (the
     /// hermetic [`ModelCatalog::with_urls`] seam never reaches `OpenRouter`).
     openrouter: Option<OpenRouterCatalog>,
+    /// The model additions; `None` leaves the catalog as fetched (the
+    /// hermetic [`ModelCatalog::with_urls`] seam never fetches them).
+    additions: Option<ModelAdditions>,
     bundled: BundledAssets,
     templates: PinnedTemplates,
     compiled: Arc<Vec<Model>>,
@@ -123,6 +130,7 @@ impl ModelCatalog {
             PRIME_INFERENCE_BASE_URL,
         )
         .with_openrouter_url(OPENROUTER_BASE_URL)
+        .with_additions_url(MODEL_ADDITIONS_URL)
     }
 
     /// [`ModelCatalog::new`] with an explicit bundled-asset directory
@@ -136,11 +144,14 @@ impl ModelCatalog {
             PRIME_INFERENCE_BASE_URL,
         )
         .with_openrouter_url(OPENROUTER_BASE_URL)
+        .with_additions_url(MODEL_ADDITIONS_URL)
     }
 
     /// [`ModelCatalog::new`] with both remote URLs overridden (hermetic
     /// tests run the two fetch layers against a local server). The live
-    /// `OpenRouter` layer stays off: see [`ModelCatalog::with_openrouter_url`].
+    /// `OpenRouter` layer and the model additions stay off: see
+    /// [`ModelCatalog::with_openrouter_url`] and
+    /// [`ModelCatalog::with_additions_url`].
     pub fn with_urls(
         models_dir: Option<PathBuf>,
         bundled_dir: Option<PathBuf>,
@@ -164,6 +175,7 @@ impl ModelCatalog {
             ),
             prime_inference: PrimeInferenceCatalog::with_base_url(models_dir.clone(), pi_base_url),
             openrouter: None,
+            additions: None,
             models_dir,
             bundled: bundled_dir
                 .map_or_else(BundledAssets::at_package_root, BundledAssets::from_dir),
@@ -182,6 +194,18 @@ impl ModelCatalog {
         self.openrouter = Some(OpenRouterCatalog::new(
             self.models_dir.clone(),
             base_url,
+            self.templates.clone(),
+        ));
+        self
+    }
+
+    /// Turn on the model additions, fetched from `url` and cached beside the
+    /// models dir.
+    #[must_use]
+    pub fn with_additions_url(mut self, url: &str) -> Self {
+        self.additions = Some(ModelAdditions::new(
+            self.models_dir.clone(),
+            url,
             self.templates.clone(),
         ));
         self
@@ -246,6 +270,10 @@ impl ModelCatalog {
                 None => self.compiled.as_ref().clone(),
             },
         };
+        let base = match self.additions.as_ref().and_then(ModelAdditions::get) {
+            Some(additions) => merge_model_additions(base, &additions),
+            None => base,
+        };
         let live = credentials
             .and_then(|credentials| self.prime_inference.get(&credentials.as_inference()));
         let models = match live {
@@ -289,17 +317,7 @@ impl ModelCatalog {
         // alive on its own and must never propagate errors.
         tokio::spawn(async move {
             let force = trigger.forced();
-            let refreshed = catalog
-                .provider_cache
-                .refresh(
-                    PUBLIC_SCOPE,
-                    RefreshOptions {
-                        force,
-                        headers: Vec::new(),
-                        is_current: None,
-                    },
-                )
-                .await;
+            let refreshed = catalog.refresh(force).await;
             if let Some(credentials) = credentials {
                 let inference = credentials.as_inference();
                 catalog.prime_inference.refresh(&inference, force).await;
@@ -340,16 +358,25 @@ impl ModelCatalog {
     /// Await a direct (non-spawned) refresh — `refreshModelCatalog` in the
     /// TS reference; used by tests and callers that need the result.
     pub async fn refresh(&self, force: bool) -> Option<Vec<Model>> {
-        self.provider_cache
-            .refresh(
-                PUBLIC_SCOPE,
-                RefreshOptions {
-                    force,
-                    headers: Vec::new(),
-                    is_current: None,
-                },
-            )
-            .await
+        let provider = self.provider_cache.refresh(
+            PUBLIC_SCOPE,
+            RefreshOptions {
+                force,
+                headers: Vec::new(),
+                is_current: None,
+            },
+        );
+        // The additions ride every catalog refresh, on the same gating.
+        let additions = async {
+            if let Some(additions) = &self.additions {
+                let refreshed = additions.refresh(force).await;
+                tracing::debug!(
+                    refreshed = refreshed.map(|models| models.len()),
+                    "model additions refresh settled"
+                );
+            }
+        };
+        tokio::join!(provider, additions).0
     }
 
     /// Awaited refresh of both catalog layers — the public provider catalog
@@ -363,16 +390,7 @@ impl ModelCatalog {
         force: bool,
         credentials: Option<&PrimeCredentials>,
     ) {
-        self.provider_cache
-            .refresh(
-                PUBLIC_SCOPE,
-                RefreshOptions {
-                    force,
-                    headers: Vec::new(),
-                    is_current: None,
-                },
-            )
-            .await;
+        self.refresh(force).await;
         if let Some(credentials) = credentials {
             let inference = credentials.as_inference();
             self.prime_inference.refresh(&inference, force).await;

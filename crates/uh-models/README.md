@@ -19,6 +19,11 @@ Port of the TS catalog client (branch `feat/catalog-client`:
   `schemaVersion == 1`), skip-invalid for remote model refresh, compat
   validation per `api`. Unsupported future versions keep last-good
   silently, forever.
+- Model additions: this repository's `catalog/models.additions.v1.json`
+  (the models released since the catalog repo's last update, written by
+  `scripts/sync-model-additions.py`) extends whichever layer served; same
+  schema and pinning, fetched with the catalog, and a model the catalog
+  lists is always the catalog's.
 - Transport pinning: every remote model must match a compiled
   `(provider, api, baseUrl)` tuple; catalog data never carries request
   headers.
@@ -53,6 +58,8 @@ Port of the TS catalog client (branch `feat/catalog-client`:
 - `pinning::{parse_provider_model_catalog, pin_catalog_models, PinnedTemplates}`
 - `transports::{compiled_models, compiled_transport_tuples,
   prime_inference_offline_entries}`
+- `additions::{ModelAdditions, parse_model_additions, merge_model_additions,
+  MODEL_ADDITIONS_URL}`
 - `bundled::{BundledAssets, load_bundled_models, PACKAGED_MODEL_CATALOG_FILE,
   PACKAGED_MCP_CATALOG_FILE}`
 - `prime_inference::{PrimeInferenceCatalog, PrimeInferenceCredentials,

@@ -12,6 +12,10 @@
 //! - `packages/coding-agent/src/core/prime-inference-model-catalog.ts` +
 //!   `packages/ai/src/prime-inference-model-catalog.ts` -> [`prime_inference`]
 //!
+//! [`additions`] has no TS source: it reads this repository's
+//! `catalog/models.additions.v1.json`, the models released since the
+//! catalog repo's last update.
+//!
 //! The two fetched files are the client-facing catalog contract
 //! (`models/catalog.v1.json` + `plugins/catalog.v2.json` of the catalog
 //! repo). Everything the catalog can do is select among transports the
@@ -21,6 +25,7 @@
 //! Ownership: uh-models depends on uh-ai (compiled transport templates) and
 //! uh-types (shared `Model`). Nothing above uh-agent may be depended on.
 
+pub mod additions;
 pub mod bundled;
 pub mod cache;
 pub mod compat;
