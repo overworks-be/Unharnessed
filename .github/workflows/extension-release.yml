@@ -1,0 +1,129 @@
+# Releases the VS Code extension.
+#
+# A pushed tag vscode-v<version> builds the .vsix of every platform
+# (vscode/scripts/package.mjs), publishes them to the VS Code Marketplace
+# and attaches them to a GitHub release. The tag must name the version of
+# vscode/package.json.
+#
+# Run by hand (workflow_dispatch) it is a rehearsal: the same .vsix files are
+# built and kept as artifacts of the run, and nothing is published.
+#
+# The Marketplace step needs the repository secret VSCE_PAT (a Marketplace
+# token of the publisher `Unharnessed`, scope Marketplace > Manage). Without
+# it the step is skipped: the .vsix files of the GitHub release are then
+# uploaded by hand on marketplace.visualstudio.com/manage.
+#
+name: extension-release
+
+on:
+  push:
+    tags: ["vscode-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  package:
+    name: package ${{ matrix.target }}
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+    strategy:
+      # A rehearsal shows every platform that fails, not the first one.
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            rust: aarch64-apple-darwin
+            runs-on: macos-14
+          # Cross-built on Apple silicon.
+          - target: darwin-x64
+            rust: x86_64-apple-darwin
+            runs-on: macos-14
+          - target: linux-x64
+            rust: x86_64-unknown-linux-musl
+            runs-on: ubuntu-24.04
+          - target: linux-arm64
+            rust: aarch64-unknown-linux-musl
+            runs-on: ubuntu-24.04-arm
+          - target: win32-x64
+            rust: x86_64-pc-windows-msvc
+            runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: The tag names the extension's version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version=$(node -p "require('./vscode/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "vscode-v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, but vscode/package.json is version $version"
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1 action pin; toolchain pinned below
+        with:
+          toolchain: "1.98.1"
+          targets: ${{ matrix.rust }}
+      # The musl targets build ring's C code with musl-gcc.
+      - name: Install the musl C toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Install the extension's dependencies
+        working-directory: vscode
+        run: npm ci
+      - name: Build the .vsix
+        working-directory: vscode
+        run: node scripts/package.mjs ${{ matrix.target }}
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: vsix-${{ matrix.target }}
+          path: vscode/*.vsix
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    # Only a tag publishes, and only when every platform built.
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: vsix
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      # --skip-duplicate: a rerun after a partial publication publishes the rest.
+      - name: Publish to the VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        run: npx --yes @vscode/vsce@4.1.0 publish --skip-duplicate --packagePath vsix/*.vsix
+      - name: Attach the .vsix files to a GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" vsix/*.vsix --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" vsix/*.vsix --repo "$GITHUB_REPOSITORY" \
+              --title "Unharnessed Agent ${GITHUB_REF_NAME#vscode-v}" --generate-notes
+          fi

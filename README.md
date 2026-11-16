@@ -460,3 +460,4 @@ Credentials come from `~/.unharnessed/auth.json` (written by the sign-ins) or th
 - `cd vscode && npm run typecheck`: the extension's types. F5 opens an Extension Development Host with `UNHARNESSED_BIN` pointing at the debug binary.
 - `cd vscode && npm run test:e2e`: drives a real VS Code through each scenario of `test/e2e/run.mjs` with the faux provider (`UNHARNESSED_E2E_ONLY=<name>` runs one).
 - `UNHARNESSED_E2E_VSIX=<the .vsix> node test/e2e/run.mjs` (from `vscode/`): the same scenarios on a packaged `.vsix`, installed by VS Code.
+- A pushed tag `vscode-v<version>` releases the extension: [`extension-release.yml`](.github/workflows/extension-release.yml) builds the `.vsix` of every platform, attaches them to a GitHub release and, with the repository secret `VSCE_PAT`, publishes them to the Marketplace. Run by hand, the workflow only builds them.

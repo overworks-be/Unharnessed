@@ -22,9 +22,9 @@ windows-cross:
 	cargo check --workspace --target x86_64-pc-windows-gnu --all-targets
 	cargo clippy --workspace --target x86_64-pc-windows-gnu --all-targets -- -D warnings
 
-# Lints the live workflow file (.github/workflows/).
+# Lints the live workflow files (.github/workflows/).
 actionlint:
 	@command -v actionlint >/dev/null 2>&1 || { echo "actionlint not installed (see rhysd/actionlint releases)"; exit 1; }
-	actionlint .github/workflows/ci.yml
+	actionlint .github/workflows/ci.yml .github/workflows/model-additions.yml .github/workflows/extension-release.yml
 
 .PHONY: check deny windows-cross actionlint
