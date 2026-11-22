@@ -46,14 +46,9 @@ impl crate::mode::Runtime for PrintRuntime {
                     Ok(1)
                 }
             },
-            // This build has no terminal UI: a terminal launch without
-            // `-p`/`--mode` points at the headless modes instead.
-            AppMode::Interactive => {
-                eprintln!(
-                    "Error: this build has no interactive terminal UI; use -p/--print, --mode json, or --mode acp"
-                );
-                Ok(1)
-            }
+            // A terminal launch without `-p`/`--mode`: the terminal UI,
+            // over an agent process of its own.
+            AppMode::Interactive => Ok(run_interactive(options)),
             // ACP mode: a thin JSON-RPC stdio transport over the same
             // in-process session engine the print mode uses.
             AppMode::Acp => match run_acp_mode(options) {
@@ -65,6 +60,70 @@ impl crate::mode::Runtime for PrintRuntime {
             },
         }
     }
+}
+
+/// Where the terminal UI records the frames it exchanges with its agent,
+/// when set: a trace `--tui-replay` plays.
+const TUI_RECORD_ENV: &str = "UNHARNESSED_TUI_RECORD";
+
+/// The terminal UI (crates/uh-tui): it starts this binary again as its
+/// agent (`--mode acp`, with the launch's own options) and is its ACP
+/// client, as the VS Code extension is.
+fn run_interactive(options: &RunOptions) -> i32 {
+    let program = match std::env::current_exe() {
+        Ok(program) => program,
+        Err(error) => {
+            eprintln!("Error: cannot find this program to start the agent: {error}");
+            return 1;
+        }
+    };
+    let session = &options.session;
+    uh_tui::live::run(uh_tui::live::Start {
+        launch: uh_tui::agent::Launch {
+            program,
+            args: options.agent.args.clone(),
+            dir: options.agent.dir.clone(),
+        },
+        fresh: options.agent.fresh.clone(),
+        saved: options.agent.saved.clone(),
+        cwd: options.config.cwd.display().to_string(),
+        resumes: session.continue_recent || session.resume.is_some() || session.fork.is_some(),
+        // `--resume` alone: the folder's saved conversations, to choose from.
+        choose: session.resume_bare,
+        first: options.initial_message.clone(),
+        then: options.messages.clone(),
+        images: options
+            .initial_images
+            .iter()
+            .map(|image| uh_tui::live::Image {
+                mime: image.mime_type.clone(),
+                data: image.data.clone(),
+            })
+            .collect(),
+        record: std::env::var_os(TUI_RECORD_ENV)
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from),
+        open: open_page,
+    })
+}
+
+/// Opens `url` for the terminal UI: with the command `BROWSER` names (its
+/// words, then the address), as command-line tools do; else in the
+/// platform's browser. Nothing is said when it cannot: the address is on
+/// the screen.
+fn open_page(url: &str) {
+    let named = std::env::var("BROWSER").unwrap_or_default();
+    let mut words = named.split_whitespace();
+    let Some(program) = words.next() else {
+        return uh_core::platform::browser::open_in_browser(url);
+    };
+    let _ = std::process::Command::new(program)
+        .args(words)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 /// The ACP headless mode: build the in-process session engine the same way

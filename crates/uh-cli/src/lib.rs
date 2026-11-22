@@ -96,6 +96,12 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         return run_runtime_bootstrap();
     }
 
+    // The terminal UI's verifier: a recorded conversation replayed on the
+    // screen, or drawn into text (crates/uh-tui).
+    if args.first().map(String::as_str) == Some("--tui-replay") {
+        return Ok(uh_tui::replay::run(&args[1..]));
+    }
+
     // Public command routing: help requests, removed commands, management
     // commands, and the model/session rewrites.
     let public_command = public_command::handle_public_command(args);
@@ -168,6 +174,7 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 
     // cwd: chdir before anything cwd-bound runs.
+    let launched_in = std::env::current_dir().map_err(|e| e.to_string())?;
     let cwd = match &parsed.cwd {
         Some(cwd) => {
             let cwd = crate::config::expand_tilde_path(cwd);
@@ -238,6 +245,12 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         stdin_content.as_deref(),
     )
     .initial_message;
+    let agent = mode::AgentLaunch {
+        args: args::agent_args(&args, &parsed, args::AgentOn::Launch),
+        fresh: args::agent_args(&args, &parsed, args::AgentOn::New),
+        saved: args::agent_args(&args, &parsed, args::AgentOn::Saved),
+        dir: launched_in,
+    };
     let options = mode::RunOptions {
         app_mode,
         config: mode::runtime_config_from_args(&parsed, cwd, agent_dir, session_dir.clone()),
@@ -257,6 +270,7 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         list_models: parsed.list_models,
         verbose: parsed.verbose,
         offline: parsed.offline,
+        agent,
     };
 
     match runtime.run(&options) {

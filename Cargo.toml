@@ -7,6 +7,7 @@ members = [
     "crates/uh-agent",
     "crates/uh-core",
     "crates/uh-daemon",
+    "crates/uh-tui",
     "crates/uh-cli",
 ]
 

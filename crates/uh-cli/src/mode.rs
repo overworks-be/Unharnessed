@@ -128,6 +128,21 @@ pub struct RunOptions {
     pub initial_images: Vec<uh_agent::types::ImageContent>,
     pub verbose: bool,
     pub offline: bool,
+    /// The launch again, for the agent process the terminal UI starts.
+    pub agent: AgentLaunch,
+}
+
+/// How the terminal UI starts its agent (`--mode acp`) for this launch:
+/// with the launch's own options, in the folder it was launched in (a
+/// relative `--cwd` then names the same folder again).
+#[derive(Debug, Clone, Default)]
+pub struct AgentLaunch {
+    pub args: Vec<String>,
+    /// The same for another conversation than the launch's: a new one,
+    /// and a saved one (it then adds `--resume=<file>`).
+    pub fresh: Vec<String>,
+    pub saved: Vec<String>,
+    pub dir: PathBuf,
 }
 
 /// A missing runtime subsystem, reported as a typed error instead of faked

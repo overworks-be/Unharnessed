@@ -184,6 +184,14 @@ pub struct Args {
     #[allow(clippy::struct_field_names)]
     // the trailing _args matches the TS `fileArgs` wire surface
     pub file_args: Vec<String>,
+    /// Where the messages and the `@file` arguments stand among the
+    /// arguments parsed, and the `--` before them.
+    pub positional: Vec<usize>,
+    /// Where the arguments that choose the conversation stand: `--continue`,
+    /// `--resume` and `--fork`, each with its value; and where
+    /// `--no-session` does.
+    pub selecting: Vec<usize>,
+    pub unsaved: Vec<usize>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -248,11 +256,13 @@ pub fn parse_args(args: &[String]) -> Args {
 
         if end_of_options {
             result.messages.push(arg.to_string());
+            result.positional.push(i);
             i += 1;
             continue;
         }
         if arg == "--" {
             end_of_options = true;
+            result.positional.push(i);
             i += 1;
             continue;
         }
@@ -285,20 +295,28 @@ pub fn parse_args(args: &[String]) -> Args {
                     )));
                 }
             }
-            "--continue" | "-c" => result.continue_ = true,
-            "--resume" | "-r" => match args.get(i + 1) {
-                Some(next)
-                    if !next.starts_with('-') && !next.starts_with('@') && !next.is_empty() =>
-                {
-                    result.resume = Some(next.clone());
-                    i += 1;
+            "--continue" | "-c" => {
+                result.continue_ = true;
+                result.selecting.push(i);
+            }
+            "--resume" | "-r" => {
+                result.selecting.push(i);
+                match args.get(i + 1) {
+                    Some(next)
+                        if !next.starts_with('-') && !next.starts_with('@') && !next.is_empty() =>
+                    {
+                        result.resume = Some(next.clone());
+                        result.selecting.push(i + 1);
+                        i += 1;
+                    }
+                    Some(next) if next.is_empty() => {
+                        result.resume_bare = true;
+                        result.selecting.push(i + 1);
+                        i += 1;
+                    }
+                    _ => result.resume_bare = true,
                 }
-                Some(next) if next.is_empty() => {
-                    result.resume_bare = true;
-                    i += 1;
-                }
-                _ => result.resume_bare = true,
-            },
+            }
             "--provider" => result.provider = Some(require_value!(arg)),
             "--model" => result.model = Some(require_value!(arg)),
             "--api-key" => result.api_key = Some(require_value!(arg)),
@@ -308,8 +326,16 @@ pub fn parse_args(args: &[String]) -> Args {
                 let value = require_value!(arg);
                 result.append_system_prompt.push(value);
             }
-            "--no-session" => result.no_session = true,
-            "--fork" => result.fork = Some(require_value!(arg)),
+            "--no-session" => {
+                result.no_session = true;
+                result.unsaved.push(i);
+            }
+            "--fork" => {
+                // With its value, or alone where it has none.
+                result.selecting.push(i);
+                result.fork = Some(require_value!(arg));
+                result.selecting.push(i);
+            }
             "--session-dir" => result.session_dir = Some(require_value!(arg)),
             "--models" => {
                 let value = require_value!(arg);
@@ -362,6 +388,7 @@ pub fn parse_args(args: &[String]) -> Args {
                     if !next.starts_with('@') && (!next.starts_with('-') || next.starts_with("---"))
                     {
                         result.messages.push(next.clone());
+                        result.positional.push(i + 1);
                         i += 1;
                     }
                 }
@@ -480,6 +507,7 @@ pub fn parse_args(args: &[String]) -> Args {
             "--verbose" => result.verbose = true,
             "--offline" => result.offline = true,
             _ if arg.starts_with("--resume=") => {
+                result.selecting.push(i);
                 let value = &arg["--resume=".len()..];
                 if value.is_empty() {
                     result.resume_bare = true;
@@ -499,13 +527,17 @@ pub fn parse_args(args: &[String]) -> Args {
             }
             _ if arg.starts_with('@') => {
                 result.file_args.push(arg[1..].to_string());
+                result.positional.push(i);
             }
             _ if arg.starts_with('-') => {
                 result
                     .diagnostics
                     .push(Diagnostic::error(format!("Unknown option: {arg}")));
             }
-            _ => result.messages.push(arg.to_string()),
+            _ => {
+                result.messages.push(arg.to_string());
+                result.positional.push(i);
+            }
         }
         i += 1;
     }
@@ -517,6 +549,47 @@ pub fn parse_args(args: &[String]) -> Args {
     }
 
     result
+}
+
+/// The conversation an agent process is started on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentOn {
+    /// The one the launch chose; a new one where it chose none, or left
+    /// the choice to the user (`--resume` alone).
+    Launch,
+    /// A new one, whatever the launch chose.
+    New,
+    /// A saved one, which the client names itself (`--resume=<file>`).
+    Saved,
+}
+
+/// The arguments of the agent process a client starts for this launch (the
+/// terminal UI): the launch's own options, without the messages and the
+/// `@file` arguments, which the client sends itself, then `--mode acp`.
+/// For another conversation than the launch's, they come without what
+/// chose that one; for a saved one, without `--no-session` either.
+/// `parsed` is what [`parse_args`] made of `args`.
+#[must_use]
+pub fn agent_args(args: &[String], parsed: &Args, on: AgentOn) -> Vec<String> {
+    let internal = args.first().map(String::as_str) == Some(INTERNAL_RUNTIME_COMMAND_MARKER);
+    let on = match on {
+        AgentOn::Launch if parsed.resume_bare => AgentOn::New,
+        on => on,
+    };
+    let dropped = |index: &usize| {
+        parsed.positional.contains(index)
+            || (on != AgentOn::Launch && parsed.selecting.contains(index))
+            || (on == AgentOn::Saved && parsed.unsaved.contains(index))
+    };
+    let mut out: Vec<String> = args
+        .iter()
+        .enumerate()
+        .skip(usize::from(internal))
+        .filter(|(index, _)| !dropped(index))
+        .map(|(_, arg)| arg.clone())
+        .collect();
+    out.extend(["--mode".to_string(), "acp".to_string()]);
+    out
 }
 
 /// `hasRequiredOptionValue` from args.ts: the value flag either consumes the
@@ -559,6 +632,126 @@ mod tests {
             .find(|d| d.is_error)
             .map(|d| d.message.as_str())
             .unwrap_or_default()
+    }
+
+    /// The agent's arguments, and what the agent then reads in them.
+    fn for_agent(args: &[&str]) -> (Vec<String>, Args) {
+        let args: Vec<String> = args.iter().map(std::string::ToString::to_string).collect();
+        let out = agent_args(&args, &parse_args(&args), AgentOn::Launch);
+        let read = parse_args(&out);
+        (out, read)
+    }
+
+    /// The agent's arguments for another conversation than the launch's.
+    fn for_agent_on(args: &[&str], on: AgentOn) -> Vec<String> {
+        let args: Vec<String> = args.iter().map(std::string::ToString::to_string).collect();
+        agent_args(&args, &parse_args(&args), on)
+    }
+
+    // How an agent started on another conversation could open the wrong
+    // one: what chose the launch's stays, and wins over the one named; its
+    // value stays alone and becomes a message (refused in ACP mode);
+    // `--resume` alone stays and the agent, which cannot ask, refuses to
+    // start; `--resume=<id>` is not seen as a choice; an option that
+    // follows `--resume` alone goes with it; `--no-session` stays on a
+    // saved conversation, which then does not open, or goes from a new
+    // one, which is then saved against the launch's word.
+    #[test]
+    fn agent_args_for_another_conversation_drop_what_chose_the_first() {
+        let launch = ["--model", "gpt-5", "--resume", "abc", "--no-session", "hi"];
+        assert_eq!(
+            for_agent_on(&launch, AgentOn::New),
+            ["--model", "gpt-5", "--no-session", "--mode", "acp"]
+        );
+        assert_eq!(
+            for_agent_on(&launch, AgentOn::Saved),
+            ["--model", "gpt-5", "--mode", "acp"]
+        );
+        assert_eq!(
+            for_agent_on(&launch, AgentOn::Launch),
+            [
+                "--model",
+                "gpt-5",
+                "--resume",
+                "abc",
+                "--no-session",
+                "--mode",
+                "acp"
+            ]
+        );
+
+        for chose in [
+            &["-c"][..],
+            &["--continue"],
+            &["--resume=abc"],
+            &["-r", "abc"],
+            &["--fork", "abc"],
+            &["--resume", ""],
+        ] {
+            let launch = [chose, &["--verbose"]].concat();
+            for on in [AgentOn::New, AgentOn::Saved] {
+                assert_eq!(
+                    for_agent_on(&launch, on),
+                    ["--verbose", "--mode", "acp"],
+                    "{chose:?}"
+                );
+            }
+        }
+
+        // `--resume` alone leaves the choice to the user: the first agent
+        // starts on a new conversation, and the option after it stays.
+        for on in [AgentOn::Launch, AgentOn::New, AgentOn::Saved] {
+            assert_eq!(
+                for_agent_on(&["--resume", "--verbose"], on),
+                ["--verbose", "--mode", "acp"]
+            );
+        }
+        assert_eq!(for_agent_on(&["-r"], AgentOn::Launch), ["--mode", "acp"]);
+    }
+
+    // How the agent the terminal UI starts could get the wrong launch: a
+    // message or an `@file` reaches it (it refuses `@file` in ACP mode); a
+    // message after `--` that looks like an option becomes that option; an
+    // option's value that looks like a message goes with the messages, and
+    // the option takes the next argument; the launch's own `--mode` wins
+    // over `acp`; the `--` stays and `--mode acp` becomes a message; the
+    // internal marker, which no process can be started with, stays first.
+    #[test]
+    fn agent_args_keep_the_options_and_drop_what_the_client_sends() {
+        let (out, read) = for_agent(&["--model", "gpt-5", "hello", "@notes.md", "--no-session"]);
+        assert_eq!(out, ["--model", "gpt-5", "--no-session", "--mode", "acp"]);
+        assert_eq!(read.model.as_deref(), Some("gpt-5"));
+        assert!(read.messages.is_empty() && read.file_args.is_empty() && read.no_session);
+        assert_eq!(read.mode, Some(Mode::Acp));
+
+        // A message after `--` that looks like an option stays a message.
+        let (out, read) = for_agent(&["-c", "--", "--no-session", "@not-a-file"]);
+        assert_eq!(out, ["-c", "--mode", "acp"]);
+        assert!(read.continue_ && !read.no_session && read.file_args.is_empty());
+        assert_eq!(read.mode, Some(Mode::Acp));
+
+        // A value stays with its option, whatever it looks like.
+        let (out, read) = for_agent(&[
+            "--system-prompt",
+            "be brief",
+            "--resume",
+            "abc",
+            "fix the tests",
+            "--append-system-prompt",
+            "--not-an-option",
+        ]);
+        assert_eq!(read.system_prompt.as_deref(), Some("be brief"));
+        assert_eq!(read.resume.as_deref(), Some("abc"));
+        assert_eq!(read.append_system_prompt, ["--not-an-option"]);
+        assert!(read.messages.is_empty() && !out.contains(&"fix the tests".to_string()));
+
+        // The launch's own mode does not win over the agent's.
+        let (_, read) = for_agent(&["--mode", "text", "hello"]);
+        assert_eq!(read.mode, Some(Mode::Acp));
+
+        // The internal marker is not an argument a process can be started with.
+        let (out, _) = for_agent(&[INTERNAL_RUNTIME_COMMAND_MARKER, "--verbose", "hello"]);
+        assert_eq!(out, ["--verbose", "--mode", "acp"]);
     }
 
     #[test]

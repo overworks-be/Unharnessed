@@ -1,0 +1,23 @@
+[package]
+name = "uh-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The terminal UI."
+
+[dependencies]
+serde_json = { workspace = true }
+# The terminal: its double buffer (only the cells that changed are written)
+# and crossterm underneath, through ratatui's re-export so both agree on it.
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+# What a character takes on the screen: its cells, and the code points that
+# make one of it.
+unicode-width = "0.2"
+unicode-segmentation = "1"
+# The session's folder as git sees it, for the `@` menu; a mention's link.
+ignore = "0.4"
+url = "2"
+
+[lints]
+workspace = true

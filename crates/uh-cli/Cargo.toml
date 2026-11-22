@@ -11,6 +11,7 @@ uh-core = { path = "../uh-core" }
 uh-ai = { path = "../uh-ai" }
 uh-agent = { path = "../uh-agent" }
 uh-daemon = { path = "../uh-daemon" }
+uh-tui = { path = "../uh-tui" }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
