@@ -1,7 +1,7 @@
 //! Product-wide constants and environment handling, ported from
 //! `packages/coding-agent/src/config.ts`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The user-facing application name (`piConfig.name` in package.json).
 pub const APP_NAME: &str = "unharnessed";
@@ -42,10 +42,7 @@ fn package_dir() -> PathBuf {
             return expand_tilde_path(&env_dir);
         }
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| PathBuf::from("."))
+    uh_types::platform::executable_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn packaged_manifest_version() -> Option<String> {

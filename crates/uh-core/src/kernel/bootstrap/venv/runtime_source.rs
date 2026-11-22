@@ -13,11 +13,7 @@ pub(in crate::kernel::bootstrap) fn package_dir() -> PathBuf {
             return expand_home(&env_dir);
         }
     }
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| PathBuf::from("."));
-    exe_dir
+    uh_types::platform::executable_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// The packaged sidecar directory (the exe-adjacent layout): the TS

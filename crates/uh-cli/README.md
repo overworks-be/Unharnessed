@@ -5,9 +5,10 @@ The `unharnessed` binary and composition root.
 ## Scope
 
 - Argument parsing, mode selection and exit codes. Modes: `-p` (print, `text`
-  or `json` via `--mode`) and `--mode acp`. Public commands: `help`,
-  `mcp add|list|get|remove`, `model list`, `session export`, `prompt`. The TUI,
-  the daemon modes and their commands (`agents`, `attach`, `status`, `doctor`,
+  or `json` via `--mode`), `--mode acp`, and the terminal UI when launched
+  in a terminal without either. Public commands: `help`,
+  `mcp add|list|get|remove`, `model list`, `session export`, `prompt`. The
+  old TUI, the daemon modes and their commands (`agents`, `attach`, `status`, `doctor`,
   `shutdown`, `update`, `schedule`, ...) were removed; the old names print
   removal guidance.
 - **Print runtime** (`print_runtime.rs`): drives the in-process session engine
@@ -40,10 +41,30 @@ The `unharnessed` binary and composition root.
   login screens).
 - **MCP login logic** kept for a future front-end (`mcp_login.rs`,
   `client_auth.rs`): the MCP auth flows, driven through the same channel.
+- **Terminal UI**: a terminal launch without `-p`/`--mode` opens uh-tui's
+  live session. It starts this binary again as its agent (`--mode acp`),
+  with the launch's own options (`args::agent_args`: the arguments without
+  the messages and the `@file`s, which the UI sends itself) from the folder
+  the launch was in, and is its ACP client. The UI can leave that
+  conversation for another (a new one, a saved one), on an agent started
+  for it: it gets the same arguments without what chose the launch's
+  (`--continue`, `--resume`, `--fork`; `--no-session` too for a saved
+  one). `--resume` without a session starts on a new conversation, the UI
+  open on the saved ones. `UNHARNESSED_TUI_RECORD=<file>` records
+  the frames exchanged. The UI opens a server's port in the browser with
+  the command `BROWSER` names (its words, then the address), else as the
+  sign-ins do (`uh_core::platform::browser`). The hidden `--tui-replay <recording>` flag hands
+  its arguments to uh-tui (a recorded conversation on the screen, or drawn
+  into text with `--at`).
 - **Packaged layout**: the binary plus `package.json`, `unharnessed-runtime/`
-  and `skills/`, resolved from the executable's directory; the hidden
+  and `skills/`, resolved from the executable's directory (a link to the
+  binary is followed to it: `uh_types::platform::executable_dir`); the hidden
   `--unharnessed-bootstrap` flag pre-builds the kernel venv. Verifier:
-  `tests/packaged_layout_e2e.rs`.
+  `tests/packaged_layout_e2e.rs`. The terminal install is this layout:
+  `scripts/unharnessed-package.sh` archives it, `install.sh` at the
+  repository's root puts it in `~/.local/share/unharnessed/<version>/` behind
+  the link `~/.local/bin/unharnessed`. Verifier:
+  `scripts/unharnessed-install-e2e.py`.
 
 ## Non-goals
 
@@ -58,6 +79,6 @@ The `unharnessed` executable surface (flags, subcommands, exit codes);
 
 ## Depends on
 
-uh-types, uh-ai, uh-agent, uh-core, uh-daemon (one-way, composition root).
+uh-types, uh-ai, uh-agent, uh-core, uh-daemon, uh-tui (one-way, composition root).
 Verifiers: `tests/print_runtime_e2e.rs`, `tests/acp_mode_e2e.rs`,
 `tests/acp_config_option_e2e.rs`, `tests/continue_guard_e2e.rs`.

@@ -20,7 +20,9 @@ Wire and domain types + serde only:
   read by the session HTML exporter.
 - `usage`, `memory_release`: small shared data helpers.
 - `platform`: process identity and home-dir helpers (`platform::dirs::home_dir`:
-  `HOME`, then `USERPROFILE` / `HOMEDRIVE`+`HOMEPATH` on Windows).
+  `HOME`, then `USERPROFILE` / `HOMEDRIVE`+`HOMEPATH` on Windows), and the
+  executable's folder (`platform::dirs::executable_dir`, a link to the
+  executable followed to the file).
 
 ## Non-goals
 

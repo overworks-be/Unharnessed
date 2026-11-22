@@ -1,11 +1,16 @@
-# Releases the VS Code extension.
+# Releases the VS Code extension, and the terminal's archives with it.
 #
 # A pushed tag vscode-v<version> builds the .vsix of every platform
 # (vscode/scripts/package.mjs), publishes them to the VS Code Marketplace
 # and attaches them to a GitHub release. The tag must name the version of
 # vscode/package.json.
 #
-# Run by hand (workflow_dispatch) it is a rehearsal: the same .vsix files are
+# The same agent is archived for the terminal on macOS and Linux
+# (scripts/unharnessed-package.sh): unharnessed-<target>.tar.gz and its
+# .sha256, attached to the same release, which install.sh downloads. Each
+# archive is installed on its runner before it is kept.
+#
+# Run by hand (workflow_dispatch) it is a rehearsal: the same files are
 # built and kept as artifacts of the run, and nothing is published.
 #
 # The Marketplace step needs the repository secret VSCE_PAT (a Marketplace
@@ -92,6 +97,27 @@ jobs:
           name: vsix-${{ matrix.target }}
           path: vscode/*.vsix
           if-no-files-found: error
+      # The agent is built already: this archives it with what ships beside it.
+      - name: Build the terminal's archive
+        if: runner.os != 'Windows'
+        run: scripts/unharnessed-package.sh ${{ matrix.target }} terminal
+      # darwin-x64 is cross-built: its runner would ask for the darwin-arm64 archive.
+      - name: Install the archive, and ask the installed agent its version
+        if: runner.os != 'Windows' && matrix.target != 'darwin-x64'
+        run: |
+          UNHARNESSED_INSTALL_FROM="$PWD/terminal" sh install.sh --no-kernel
+          version=$(node -p "require('./vscode/package.json').version")
+          said=$("$HOME/.local/bin/unharnessed" --version)
+          if [ "$said" != "$version" ]; then
+            echo "::error::the installed agent says version $said, vscode/package.json is $version"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: runner.os != 'Windows'
+        with:
+          name: terminal-${{ matrix.target }}
+          path: terminal/unharnessed-*
+          if-no-files-found: error
 
   publish:
     name: publish
@@ -110,6 +136,11 @@ jobs:
           pattern: vsix-*
           merge-multiple: true
           path: vsix
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: terminal-*
+          merge-multiple: true
+          path: terminal
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -117,13 +148,13 @@ jobs:
       - name: Publish to the VS Code Marketplace
         if: env.VSCE_PAT != ''
         run: npx --yes @vscode/vsce@4.1.0 publish --skip-duplicate --packagePath vsix/*.vsix
-      - name: Attach the .vsix files to a GitHub release
+      - name: Attach the .vsix files and the terminal's archives to a GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" vsix/*.vsix --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$GITHUB_REF_NAME" vsix/*.vsix terminal/unharnessed-* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" vsix/*.vsix --repo "$GITHUB_REPOSITORY" \
+            gh release create "$GITHUB_REF_NAME" vsix/*.vsix terminal/unharnessed-* --repo "$GITHUB_REPOSITORY" \
               --title "Unharnessed Agent ${GITHUB_REF_NAME#vscode-v}" --generate-notes
           fi

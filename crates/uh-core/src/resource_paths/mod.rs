@@ -30,10 +30,7 @@ pub(crate) fn package_dir() -> PathBuf {
             return expand_tilde(&env_dir);
         }
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
-        .unwrap_or_else(|| PathBuf::from("."))
+    uh_types::platform::executable_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// The bundled docs directory (TS `getDocsPath`): `<package dir>/docs`.

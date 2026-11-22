@@ -39,6 +39,21 @@ pub fn home_dir() -> Option<PathBuf> {
     None
 }
 
+/// The folder the running executable is in: what ships beside it (the
+/// kernel's runtime, the built-in skills, the bundled catalogs) is looked for
+/// there. A symbolic link to the executable (`~/.local/bin/unharnessed` of an
+/// install) is followed to the file: Linux names the file already, macOS names
+/// the link. Windows keeps the path as the system gives it (following it
+/// there gives a `\\?\` path, which the programs it is handed to do not all
+/// take). `None` when the system does not tell.
+#[must_use]
+pub fn executable_dir() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    #[cfg(unix)]
+    let executable = std::fs::canonicalize(&executable).unwrap_or(executable);
+    executable.parent().map(std::path::Path::to_path_buf)
+}
+
 /// `UNHARNESSED_CODING_AGENT_DIR`: the agent state directory override (a
 /// wire-internal identifier kept byte-compatible with the TS product).
 pub const ENV_AGENT_DIR: &str = "UNHARNESSED_CODING_AGENT_DIR";

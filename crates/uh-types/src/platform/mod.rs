@@ -9,5 +9,5 @@
 pub mod dirs;
 pub mod process;
 
-pub use dirs::{agent_dir, home_dir};
+pub use dirs::{agent_dir, executable_dir, home_dir};
 pub use process::{is_process_alive, process_start_id};

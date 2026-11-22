@@ -35,7 +35,7 @@
 
 Unharnessed is a coding agent harness built on one idea: **the model gets exactly one tool**, `ipython`, a persistent CPython REPL. There is no `read`, no `grep`, no `edit_file`, no `web_fetch`. Reading a file, searching a repository, patching forty call sites, starting a dev server or calling an MCP service: all of it is Python the model writes, in a kernel that stays alive for the whole session.
 
-The harness around it (Rust) does the rest of the job: the agent loop, compaction, goals, provider retry and failover, sessions, the VS Code panel. It ships as a VS Code extension, a headless CLI and an [ACP](https://agentclientprotocol.com) agent.
+The harness around it (Rust) does the rest of the job: the agent loop, compaction, goals, provider retry and failover, sessions, the VS Code panel. It ships as a VS Code extension, a terminal app, a headless CLI and an [ACP](https://agentclientprotocol.com) agent.
 
 > [!WARNING]
 > Unharnessed never asks before running a command. The model's Python and shell commands run with your user permissions, and the kernel is **not** a sandbox. Use it in a container, a VM or a disposable checkout. [Why there are no permission prompts](#no-permission-prompts).
@@ -57,7 +57,7 @@ The harness around it (Rust) does the rest of the job: the agent loop, compactio
 - [Skills](#skills) · [`AGENTS.md`](#agentsmd--claudemd) · [MCP](#mcp-inside-the-kernel)
 - [Providers and failover](#providers-and-failover): your subscription, any key, local models
 - [What we left out](#what-we-left-out): no sub-agents, no memory, no permission prompts
-- [Surfaces](#surfaces): VS Code, CLI, ACP
+- [Surfaces](#surfaces): VS Code, terminal, CLI, ACP
 - [Architecture](#architecture) · [Install](#install) · [Build from source](#build-from-source) · [Development](#development)
 
 ---
@@ -371,6 +371,17 @@ Every rule in a system prompt is a decision made for the model, and it sits in t
 - **Idle conversations sleep** after 90 minutes without work: the agent stops and saves its kernel's variables; opening the conversation brings them back. It never sleeps while a turn, a goal or a `bash()` command runs.
 - **A context ring** next to send shows how full the window is and how much the provider's cache took, and tells when a compaction is coming.
 
+### Terminal
+
+`unharnessed`, run in a terminal with no `-p`, opens the same panel full screen: the conversation with its thinking and its cells, the **kernel panel** (variables, running servers, a stop button), the providers' sign-ins, the model and effort menus, the saved conversations, the settings, MCP servers and skills. It is an ACP client of its own agent process, like the extension. [Install](#install) it with one command.
+
+```bash
+unharnessed                       # a new conversation in this folder
+unharnessed "Port the tests"      # ... that starts on a message
+unharnessed -c                    # the last conversation, its kernel restored
+unharnessed --resume              # pick one among the saved conversations
+```
+
 ### CLI
 
 ```bash
@@ -398,6 +409,7 @@ unharnessed prompt                                # the assembled system prompt
 │ VS Code extension       │ ────────────────────────▶ │ unharnessed  (Rust)            │
 │ TypeScript + React      │                           │                                │
 └─────────────────────────┘                           │ uh-cli      binary, -p, logins │
+                                                      │ uh-tui      terminal UI        │
                                                       │ uh-daemon   ACP transport      │
               unharnessed -p / --mode json  ────────▶ │ uh-core     session engine     │
                                                       │ uh-agent    turn loop          │
@@ -420,6 +432,7 @@ unharnessed prompt                                # the assembled system prompt
 | [`crates/uh-agent`](crates/uh-agent) | the turn loop: provider stream, tool dispatch, aborts. Tool-agnostic |
 | [`crates/uh-core`](crates/uh-core) | the session engine: kernel, compaction, goals, autonomous mode, retry/failover, wakes, sessions, skills, MCP, system prompt |
 | [`crates/uh-daemon`](crates/uh-daemon) | the ACP transport and the session leases (no daemon, despite the name) |
+| [`crates/uh-tui`](crates/uh-tui) | the terminal UI: `unharnessed` in a terminal, an ACP client over its own agent process; `--tui-replay` plays a recorded conversation |
 | [`crates/uh-cli`](crates/uh-cli) | the `unharnessed` binary: flags, `-p` runtime, provider sign-ins |
 | [`unharnessed-runtime`](unharnessed-runtime) | the Python kernel: the REPL protocol, `bash()`, the MCP client, snapshots |
 | [`skills`](skills) | the built-in skills: `goal`, `mcp`, `attach-image` |
@@ -431,7 +444,17 @@ Dependencies go one way, from `uh-types` up to `uh-cli`. Each crate's README sta
 
 ## Install
 
-**VS Code**: install [Unharnessed Agent](https://marketplace.visualstudio.com/items?itemName=Unharnessed.unharnessed-agent) from the Marketplace, open the panel and sign in. The agent binary ships inside the extension. It needs [uv](https://docs.astral.sh/uv/) to build its kernel the first time:
+**Terminal** (macOS and Linux):
+
+```bash
+curl -fsSL https://unharnessed.dev/install.sh | sh
+```
+
+[`install.sh`](install.sh) downloads the latest release's build for your machine, checks its SHA-256, puts it in `~/.local/share/unharnessed/<version>/`, links `~/.local/bin/unharnessed` to it and builds the kernel. Then `unharnessed`, in a project's folder, opens the terminal UI. The same command updates; `... | sh -s -- --version <v>` installs one release, `... | sh -s -- --uninstall` removes the agent and keeps `~/.unharnessed` (your conversations, keys and settings). It edits no shell file: when `~/.local/bin` is not on your `PATH`, it prints the line that adds it.
+
+**VS Code**: install [Unharnessed Agent](https://marketplace.visualstudio.com/items?itemName=Unharnessed.unharnessed-agent) from the Marketplace, open the panel and sign in. The agent binary ships inside the extension.
+
+Both need [uv](https://docs.astral.sh/uv/) to build the kernel the first time:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -457,7 +480,10 @@ Credentials come from `~/.unharnessed/auth.json` (written by the sign-ins) or th
 - `scripts/unharnessed-smoke.sh <dir>`: drives the real binary end to end against a real model.
 - `scripts/unharnessed-wakes-e2e.py <dir>`: provider retry and wake-ups, in `-p` and ACP, with the faux provider.
 - `scripts/unharnessed-skill-loading.sh <dir>`: skill loading, no model needed.
+- `uv run scripts/unharnessed-tui-e2e.py <dir>`: the terminal UI on a recorded conversation: frames drawn without a terminal, and the replay in a pseudo-terminal. `unharnessed --tui-replay crates/uh-tui/recordings/demo.out` plays it; `scripts/unharnessed-tui-record.py <dir>` records another.
+- `uv run scripts/unharnessed-tui-live-e2e.py <dir>`: the live terminal UI in a pseudo-terminal, over its own agent with the faux provider and a real kernel, its providers' screen (a key saved and removed, a sign-in started, stopped and failing, nothing reachable), its message box (the `@` menu and the links of the files mentioned, the `/` menu of the commands, prompts and skills, a message sent into the running turn, the messages sent before), its model and effort menus, its saved conversations (a new one, one opened, one deleted, `--resume` alone), its kernel's panel (a server's port opened and the server stopped, the panel scrolled), a goal (paused, coming back with its conversation, resumed, ended), its settings (a switch, a number and a model written, the agent restarted; an MCP server added, changed, turned off, signed in to and removed; a Marketplace service added by a token; a skill made and turned off, a folder of skills added; groups of instructions per model), a sent message changed (the conversation gone back), and images (dropped, pasted, sent, refused). It leaves the frames each session exchanged (`<dir>/live-*.rec`), which `--tui-replay` plays.
+- `uv run scripts/unharnessed-install-e2e.py <dir>`: the terminal install on the release binary (`cargo build --release -p uh-cli` first): the archive `scripts/unharnessed-package.sh` makes of it, then `install.sh` on machines of its own (a HOME under `<dir>`, a PATH of the installer's tools), the archives served over HTTP on this machine: installed under `sh`, `dash` and `bash`, updated, gone back, refused (an archive changed, cut short, of another version, of something else, a build that does not run, a file where the link goes, a script cut short), each platform's archive asked for, the kernel built with uv and said without, a session in the installed terminal UI, uninstalled.
 - `cd vscode && npm run typecheck`: the extension's types. F5 opens an Extension Development Host with `UNHARNESSED_BIN` pointing at the debug binary.
 - `cd vscode && npm run test:e2e`: drives a real VS Code through each scenario of `test/e2e/run.mjs` with the faux provider (`UNHARNESSED_E2E_ONLY=<name>` runs one).
 - `UNHARNESSED_E2E_VSIX=<the .vsix> node test/e2e/run.mjs` (from `vscode/`): the same scenarios on a packaged `.vsix`, installed by VS Code.
-- A pushed tag `vscode-v<version>` releases the extension: [`extension-release.yml`](.github/workflows/extension-release.yml) builds the `.vsix` of every platform, attaches them to a GitHub release and, with the repository secret `VSCE_PAT`, publishes them to the Marketplace. Run by hand, the workflow only builds them.
+- A pushed tag `vscode-v<version>` releases the extension and the terminal's archives: [`extension-release.yml`](.github/workflows/extension-release.yml) builds the `.vsix` of every platform and the `unharnessed-<target>.tar.gz` of macOS and Linux (each installed on its runner by `install.sh`), attaches them to a GitHub release and, with the repository secret `VSCE_PAT`, publishes the `.vsix` files to the Marketplace. Run by hand, the workflow only builds them. `unharnessed.dev/install.sh` redirects to `install.sh` on `main`, which installs the latest release.

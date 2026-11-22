@@ -35,12 +35,7 @@ impl BundledAssets {
         std::env::var_os("UNHARNESSED_PACKAGE_DIR")
             .filter(|value| !value.is_empty())
             .map_or_else(
-                || {
-                    std::env::current_exe()
-                        .ok()
-                        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-                        .unwrap_or_default()
-                },
+                || uh_types::platform::executable_dir().unwrap_or_default(),
                 PathBuf::from,
             )
     }
